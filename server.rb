@@ -51,7 +51,7 @@ class GHAapp < Sinatra::Application
     case request.env['HTTP_X_GITHUB_EVENT']
 
     when 'pull_request'
-      if @payload['action'] === 'opened' || 'edited'
+      if @payload['action'] === 'opened'
         handle_pr_opened_event(@payload)
       end
 
@@ -63,27 +63,52 @@ class GHAapp < Sinatra::Application
 
   helpers do
 
-    # When a pull request is opened, add reviewers
+    # When a pull request is opened, add reviewers and projects
     def handle_pr_opened_event(payload)
+      reviewers = get_reviewers(payload)
+      add_reviewers(payload, reviewers)
+      add_projects(payload, reviewers)
+    end
+
+
+    # Get n reviewers for a pull request
+    def get_reviewers(payload, n = 1)
       org = payload['repository']['owner']['login']
       members = @installation_client.organization_members(org).map {|x| x['login']}
       owner = payload['pull_request']['user']['login']
-      reviewers = get_reviewers(members, owner, 2)
-
-      repo = payload['pull_request']['base']['repo']['full_name']
-      pr_id = payload['number']
-
-      @installation_client.request_pull_request_review(repo, pr_id, reviewers: reviewers)
-    end
-
-    # Assign the following n reviewers for a pull request owner
-    def get_reviewers(members, owner, n = 1)
       if n > members.length - 1
         n = members.length - 1
       end
       members = members.concat(members)
       index = members.index(owner)
       return members.slice(index + 1, n)
+    end
+
+    # Add reviewers for a pull request
+    def add_reviewers(payload, reviewers)
+      repo = payload['pull_request']['base']['repo']['full_name']
+      pr_number = payload['number']
+      @installation_client.request_pull_request_review(repo, pr_number, reviewers: reviewers)
+    end
+
+    # Add projects for a pull request
+    def add_projects(payload, reviewers)
+      org = payload['repository']['owner']['login']
+      projects = @installation_client.org_projects(org)
+      pr_id = payload['pull_request']['id']
+      for reviewer in reviewers do
+        for project in projects do
+          if reviewer === project['name']
+            columns = @installation_client.project_columns(project['id'])
+            for column in columns do
+              if column['name'] === 'In progress'
+                @installation_client.create_project_card(column['id'], content_id: pr_id, content_type: 'PullRequest')
+              end
+            end
+            break
+          end
+        end
+      end
     end
 
     # Saves the raw payload and converts the payload to JSON format
