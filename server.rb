@@ -2,31 +2,21 @@ require 'sinatra'
 require 'octokit'
 require 'dotenv/load' # Manages environment variables
 require 'json'
-require 'openssl'     # Verifies the webhook signature
-require 'jwt'         # Authenticates a GitHub App
-require 'time'        # Gets ISO 8601 representation of a Time object
-require 'logger'      # Logs debug statements
+require 'openssl' # Verifies the webhook signature
+require 'jwt' # Authenticates a GitHub App
+require 'time' # Gets ISO 8601 representation of a Time object
+require 'logger' # Logs debug statements
 
 set :port, 3000
 set :bind, '0.0.0.0'
 
 
-# This is template code to create a GitHub App server.
+# This is code to create a GitHub App server.
 # You can read more about GitHub Apps here: # https://developer.github.com/apps/
-#
-# On its own, this app does absolutely nothing, except that it can be installed.
-# It's up to you to add functionality!
-# You can check out one example in advanced_server.rb.
 #
 # This code is a Sinatra app, for two reasons:
 #   1. Because the app will require a landing page for installation.
 #   2. To easily handle webhook events.
-#
-# Of course, not all apps need to receive and process events!
-# Feel free to rip out the event handling code if you don't need it.
-#
-# Have fun!
-#
 
 class GHAapp < Sinatra::Application
 
@@ -58,9 +48,14 @@ class GHAapp < Sinatra::Application
 
   post '/event_handler' do
 
-    # # # # # # # # # # # #
-    # ADD YOUR CODE HERE  #
-    # # # # # # # # # # # #
+    case request.env['HTTP_X_GITHUB_EVENT']
+
+    when 'pull_request'
+      if @payload['action'] === 'opened' || 'edited'
+        handle_pr_opened_event(@payload)
+      end
+
+    end
 
     200 # success status
   end
@@ -68,9 +63,28 @@ class GHAapp < Sinatra::Application
 
   helpers do
 
-    # # # # # # # # # # # # # # # # #
-    # ADD YOUR HELPER METHODS HERE  #
-    # # # # # # # # # # # # # # # # #
+    # When a pull request is opened, add reviewers
+    def handle_pr_opened_event(payload)
+      org = payload['repository']['owner']['login']
+      members = @installation_client.organization_members(org).map {|x| x['login']}
+      owner = payload['pull_request']['user']['login']
+      reviewers = get_reviewers(members, owner, 2)
+
+      repo = payload['pull_request']['base']['repo']['full_name']
+      pr_id = payload['number']
+
+      @installation_client.request_pull_request_review(repo, pr_id, reviewers: reviewers)
+    end
+
+    # Assign the following n reviewers for a pull request owner
+    def get_reviewers(members, owner, n = 1)
+      if n > members.length - 1
+        n = members.length - 1
+      end
+      members = members.concat(members)
+      index = members.index(owner)
+      return members.slice(index + 1, n)
+    end
 
     # Saves the raw payload and converts the payload to JSON format
     def get_payload_request(request)
@@ -82,7 +96,7 @@ class GHAapp < Sinatra::Application
       begin
         @payload = JSON.parse @payload_raw
       rescue => e
-        fail  "Invalid JSON (#{e}): #{@payload_raw}"
+        fail "Invalid JSON (#{e}): #{@payload_raw}"
       end
     end
 
