@@ -70,9 +70,14 @@ class GHAapp < Sinatra::Application
 
     # When a pull request is opened, add reviewers and projects
     def handle_issue_opened_event(payload)
+      labels = payload['issue']['labels']
       repo = payload['repository']['name']
       if repo === 'Admin'
-        get_report(payload)
+        if labels.length > 0 and labels[0]['name'] === 'enhancement'
+          create_dashboards(payload)
+        else
+          get_report(payload)
+        end
       end
     end
 
@@ -95,10 +100,23 @@ class GHAapp < Sinatra::Application
     end
 
     # Output progress report in issue comment with .csv format
-    def output_csv(payload, report)
+    def output_report(payload, report)
       repo = payload['repository']['full_name']
       issue_number = payload['issue']['number']
       @installation_client.add_comment(repo, issue_number, report)
+    end
+
+    # Create dashboards for all students
+    def create_dashboards(payload)
+      org = payload['repository']['owner']['login']
+      members = @installation_client.organization_members(org).map {|x| x['login']}
+      for member in members
+        dashboard = @installation_client.create_org_project(org, member)
+        columns = ['In progress', 'Review in progress', 'Reviewer approved', 'Done']
+        for column in columns
+          @installation_client.create_project_column(dashboard['id'], column)
+        end
+      end
     end
 
     # When a pull request is opened, add reviewers and projects
