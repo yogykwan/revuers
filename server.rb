@@ -50,10 +50,15 @@ class GHAapp < Sinatra::Application
 
     case request.env['HTTP_X_GITHUB_EVENT']
 
-    when 'pull_request'
-      if @payload['action'] === 'opened'
-        handle_pr_opened_event(@payload)
-      end
+      when 'pull_request'
+        if @payload['action'] === 'opened'
+          handle_pr_opened_event(@payload)
+        end
+
+      when 'issues'
+        if @payload['action'] === 'opened'
+          handle_issue_opened_event(@payload)
+        end
 
     end
 
@@ -64,12 +69,44 @@ class GHAapp < Sinatra::Application
   helpers do
 
     # When a pull request is opened, add reviewers and projects
+    def handle_issue_opened_event(payload)
+      repo = payload['repository']['name']
+      if repo === 'Admin'
+        get_report(payload)
+      end
+    end
+
+    # Get progress for all students
+    def get_report(payload)
+      report = []
+      org = payload['repository']['owner']['login']
+      dashboards = @installation_client.organization_projects(org)
+      for dashboard in dashboards
+        row = dashboard['name']
+        columns = @installation_client.project_columns(dashboard['id'])
+        for column in columns
+          cards = @installation_client.column_cards(column['id'])
+          row += ',' + cards.length.to_s
+        end
+        report |= [row]
+      end
+      report = report.join("\n")
+      output_report(payload, report)
+    end
+
+    # Output progress report in issue comment with .csv format
+    def output_csv(payload, report)
+      repo = payload['repository']['full_name']
+      issue_number = payload['issue']['number']
+      @installation_client.add_comment(repo, issue_number, report)
+    end
+
+    # When a pull request is opened, add reviewers and projects
     def handle_pr_opened_event(payload)
       reviewers = get_reviewers(payload)
       add_reviewers(payload, reviewers)
       add_projects(payload, reviewers)
     end
-
 
     # Get n reviewers for a pull request
     def get_reviewers(payload, n = 1)
